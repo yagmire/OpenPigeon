@@ -31,11 +31,8 @@ import com.openbubbles.openpigeon.godot.GameSessionIPC
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.min
-import kotlin.math.sqrt
+import kotlin.math.*
+import android.opengl.GLSurfaceView
 
 class PoolActivity : AppCompatActivity() {
     lateinit var sessionId: String
@@ -93,6 +90,19 @@ class PoolActivity : AppCompatActivity() {
 
         enableEdgeToEdge()
         setContentView(R.layout.activity_pool)
+
+        val glView = findViewById<GLSurfaceView>(R.id.ballGLView)
+        glView.setEGLContextClientVersion(2)
+        glView.setEGLConfigChooser(8,8,8,8,16,0)
+        glView.holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+        glView.setZOrderMediaOverlay(true)
+        glView.setRenderer(BallGLRenderer(this) { poolBalls })
+        glView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+
+        val aimingOverlay = findViewById<AimingOverlayView>(R.id.aimingOverlay)
+        aimingOverlay.activity = this
+
+
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.surfaceView)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
@@ -526,7 +536,7 @@ class PoolActivity : AppCompatActivity() {
             runOnUiThread {
                 val label = findViewById<TextView>(R.id.state_label)
                 label.visibility = View.VISIBLE
-                label.text = "Waiting for opponent..."
+                label.text = "WAITING FOR OPPONENT"
             }
 
             // send replay
@@ -579,6 +589,32 @@ class PoolActivity : AppCompatActivity() {
 
     var iAmStripes: Boolean? = null
 
+    data class Quaternion(val w: Float, val x: Float, val y: Float, val z: Float) {
+        companion object {
+            fun identity() = Quaternion(1f, 0f, 0f, 0f)
+            fun fromAxisAngle(ax: Float, ay: Float, az: Float, angle: Float): Quaternion {
+                val s = sin(angle / 2f)
+                return Quaternion(cos(angle / 2f), ax * s, ay * s, az * s)
+            }
+        }
+        fun multiply(q: Quaternion): Quaternion {
+            return Quaternion(
+                w * q.w - x * q.x - y * q.y - z * q.z,
+                w * q.x + x * q.w + y * q.z - z * q.y,
+                w * q.y - x * q.z + y * q.w + z * q.x,
+                w * q.z + x * q.y - y * q.x + z * q.w
+            )
+        }
+        fun toMatrix(): FloatArray {
+            return floatArrayOf(
+                1-2*(y*y+z*z),  2*(x*y+z*w),    2*(x*z-y*w),    0f,
+                2*(x*y-z*w),    1-2*(x*x+z*z),  2*(y*z+x*w),    0f,
+                2*(x*z+y*w),    2*(y*z-x*w),    1-2*(x*x+y*y),  0f,
+                0f,             0f,             0f,             1f
+            )
+        }
+    }
+
     data class PoolBall(val number: Int, val data: FloatBuffer, val resources: Resources, val density: Float) {
         companion object {
             val ballOrder = listOf(
@@ -599,6 +635,35 @@ class PoolActivity : AppCompatActivity() {
                 R.drawable.ball_14,
                 R.drawable.ball_15,
             )
+        }
+
+        var quaternion = Quaternion.fromAxisAngle(0f, 1f, 0f, (Math.PI / 2).toFloat()) // I hate math.
+        var lastX = Float.NaN
+        var lastY = Float.NaN
+
+        fun updateRotation(ballRadiusPx: Float = 10f, transform: android.graphics.Matrix? = null) {
+            if (lastX.isNaN()) {
+                lastX = x; lastY = y; return
+            }
+            val dx = x - lastX
+            val dy = y - lastY
+            val dist = sqrt(dx * dx + dy * dy)
+            if (dist > 0.0001f) {
+                val vec = floatArrayOf(dx, dy)
+                transform?.mapVectors(vec)
+                val sdx = vec[0]
+                val sdy = vec[1]
+                val sDist = sqrt(sdx * sdx + sdy * sdy)
+
+                val axisX = -sdy / sDist
+                val axisY = sdx / sDist
+                val axisZ = 0f
+
+                val angle = - dist / ballRadiusPx
+                val q = Quaternion.fromAxisAngle(axisX, axisY, axisZ, angle)
+                quaternion = quaternion.multiply(q)
+            }
+            lastX = x; lastY = y
         }
 
         val bitmap: Bitmap = BitmapFactory.decodeResource(resources, ballOrder[number])
@@ -634,6 +699,7 @@ class PoolActivity : AppCompatActivity() {
 
         fun draw(canvas: Canvas) {
             canvas.save()
+
             canvas.translate(x, y)
             canvas.rotate(Math.toDegrees(rot.toDouble()).toFloat())
             canvas.drawBitmap(bitmap, null, RectF(-10.0f, -10.0f, 10.0f, 10.0f), null)
@@ -669,6 +735,7 @@ class PoolActivity : AppCompatActivity() {
                 val details = ball.split(",")
                 items.add(details[4].toInt())
             }
+
             items
         }
 

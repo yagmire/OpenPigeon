@@ -15,3 +15,6 @@
 local.properties
 config.properties
 /app/src/main/cpp/CMakeLists.txt
+.idea/misc.xml
+.idea/markdown.xml
+.idea/misc.xml

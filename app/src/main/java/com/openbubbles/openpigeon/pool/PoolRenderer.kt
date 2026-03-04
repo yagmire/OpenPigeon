@@ -21,11 +21,12 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
+import android.graphics.BlurMaskFilter
 
 class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thread(), SurfaceHolder.Callback {
     var running = true
 
-    val bitmap: Bitmap = BitmapFactory.decodeResource(activity.resources, R.drawable.pool_transparent)
+    val bitmap: Bitmap = BitmapFactory.decodeResource(activity.resources, R.drawable.`pool_transparent`)
     val cue: Bitmap = BitmapFactory.decodeResource(activity.resources, R.drawable.cue)
 
     init {
@@ -70,16 +71,18 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
                 activity.handleFinishPlay()
             }
 
-            for (ball in activity.poolBalls) {
-                if (!ball.sunk) continue
-                ball.draw(canvas)
-            }
-
             canvas.drawBitmap(bitmap, null, RectF(-0.057f, -0.189f, 784.743f, 441.189f), null)
+
+            val shadowPaint = Paint().apply { // cool shadows
+                color = 0x66000000
+                isAntiAlias = true
+                maskFilter = BlurMaskFilter(8f, BlurMaskFilter.Blur.NORMAL)
+            }
 
             for (ball in activity.poolBalls) {
                 if (ball.sunk) continue
-                ball.draw(canvas)
+                ball.updateRotation(transform = transform)
+                canvas.drawCircle(ball.x + 2f, ball.y + 2f, 11f, shadowPaint)
             }
 
             if (activity.call8Ball) {
@@ -246,6 +249,9 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
                     Paint().apply {
                         alpha = (cueAlpha * 255).roundToInt()
                     })
+            }
+            activity.runOnUiThread {
+                activity.findViewById<AimingOverlayView>(R.id.aimingOverlay).invalidate()
             }
         }
     }
