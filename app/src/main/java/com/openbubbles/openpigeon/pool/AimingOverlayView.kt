@@ -14,6 +14,20 @@ class AimingOverlayView @JvmOverloads constructor(
 
     var activity: PoolActivity? = null
 
+    private val paint = Paint().apply {
+        color = Color.WHITE
+        strokeWidth = 2.5f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+
+    private val scratchPaint = Paint().apply {
+        color = Color.WHITE
+        strokeWidth = 2.5f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+
     override fun onDraw(canvas: Canvas) {
         val act = activity ?: return
         if (act.mode != PoolActivity.PoolMode.Aiming) return
@@ -23,12 +37,7 @@ class AimingOverlayView @JvmOverloads constructor(
         val cueRot = act.renderer.cueRot
 
         if (act.scratch) {
-            canvas.drawCircle(act.cueBall.x, act.cueBall.y, 15f, Paint().apply {
-                color = Color.WHITE
-                strokeWidth = 2.5f
-                style = Paint.Style.STROKE
-                isAntiAlias = true
-            })
+            canvas.drawCircle(act.cueBall.x, act.cueBall.y, 15f, scratchPaint)
         }
 
         var closestBall: PoolActivity.PoolBall? = null
@@ -60,12 +69,6 @@ class AimingOverlayView @JvmOverloads constructor(
         }
 
         if (closestBall != null) {
-            val paint = Paint().apply {
-                color = Color.WHITE
-                strokeWidth = 2.5f
-                style = Paint.Style.STROKE
-                isAntiAlias = true
-            }
             canvas.drawCircle(hitPointX, hitPointY, 9f, paint)
             canvas.drawLine(
                 hitPointX - cos(cueRot) * 10f, hitPointY - sin(cueRot) * 10f,

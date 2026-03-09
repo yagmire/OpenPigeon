@@ -2,11 +2,15 @@ package com.openbubbles.openpigeon.pool
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.os.Bundle
 import android.os.Handler
@@ -33,6 +37,9 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.*
 import android.opengl.GLSurfaceView
+import android.view.ViewGroup
+import org.json.JSONArray
+import org.json.JSONObject
 
 class PoolActivity : AppCompatActivity() {
     lateinit var sessionId: String
@@ -58,11 +65,23 @@ class PoolActivity : AppCompatActivity() {
     var touchDownCueX = 0f
     fun setCueDrawAmount(power: Float) {
         val frac = power / 2000
-        // negative cue draw is used for the hit animation, don't show in the draw
         val tip = findViewById<ImageView>(R.id.cueTip)
-        val width = findViewById<FrameLayout>(R.id.cueContainer).width
-        tip.translationX = min(-frac * width, 0f)
+        val height = findViewById<FrameLayout>(R.id.cueContainer).height
+        // positive translationY pushes tip DOWN = high power
+        tip.translationY = max(frac * height, 0f)
         renderer.cueDraw = frac * 500
+    }
+
+    private var lastHapticFrac = 0f
+
+    private fun vibrateLight(intensity: Int) {
+        val v = getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            v.vibrate(android.os.VibrationEffect.createOneShot(8, intensity))
+        } else {
+            @Suppress("DEPRECATION")
+            v.vibrate(8)
+        }
     }
 
     var setSpinX = 0f
@@ -79,9 +98,208 @@ class PoolActivity : AppCompatActivity() {
         listOf(392, 412),
     )
 
-    @SuppressLint("ClickableViewAccessibility")
+    var expandedBall: PoolBall? = null
+
+    // ── Persistent storage helpers ────────────────────────────────────────────
+
+    private val prefs: SharedPreferences by lazy {
+        getSharedPreferences("pool_game_state", Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Key prefix scoped to the current session so multiple concurrent games
+     * never collide.
+     */
+    private fun prefKey(suffix: String) = "$sessionId.$suffix"
+
+    /**
+     * Serialise the current mid-turn state to SharedPreferences.
+     * Called after every shot so the turn survives process death.
+     */
+    private fun saveGameState() {
+        val hitsJson = JSONArray().apply {
+            outgoingReplayHits.forEach { hit ->
+                put(JSONObject().apply {
+                    put("d", hit.direction)
+                    put("p", hit.power)
+                    put("x", hit.spinX)
+                    put("y", hit.spinY)
+                    // null → 0, stripes → player, solids → opponent
+                    put("s", hit.wasStripes?.let { if (it) player else if (player == 1) 2 else 1 } ?: 0)
+                })
+            }
+        }
+
+        val pocketJson = JSONArray().apply { calledPocket.forEach { put(it) } }
+
+        prefs.edit()
+            .putString(prefKey("finalBalls"),    finalBalls)
+            .putString(prefKey("replayHits"),    hitsJson.toString())
+            .putString(prefKey("calledPocket"),  pocketJson.toString())
+            .putInt(   prefKey("iAmStripes"),    iAmStripes?.let { if (it) player else if (player == 1) 2 else 1 } ?: 0)
+            .putBoolean(prefKey("scratch"),      scratch)
+            .putBoolean(prefKey("call8Ball"),    call8Ball)
+            .putBoolean(prefKey("isFirst"),      isFirst)
+            .putFloat(  prefKey("cueRot"),       renderer.cueRot)
+            .apply()
+
+        Log.i("Pool", "Game state saved (${outgoingReplayHits.size} hits so far)")
+    }
+
+    /**
+     * Attempt to restore a previously saved mid-turn state for this session.
+     * Returns true when restored state was found and applied.
+     */
+    private fun restoreGameState(): Boolean {
+        val savedFinalBalls = prefs.getString(prefKey("finalBalls"), null) ?: return false
+        val hitsRaw         = prefs.getString(prefKey("replayHits"), null) ?: return false
+
+        Log.i("Pool", "Restoring saved game state for session $sessionId")
+
+        finalBalls = savedFinalBalls
+
+        // Rebuild outgoing hits
+        outgoingReplayHits.clear()
+        val hitsJson = JSONArray(hitsRaw)
+        for (i in 0 until hitsJson.length()) {
+            val obj = hitsJson.getJSONObject(i)
+            val stripes = obj.getInt("s").let { s -> if (s == 0) null else player == s }
+            outgoingReplayHits.add(
+                BallHit(
+                    obj.getDouble("d").toFloat(),
+                    obj.getDouble("p").toFloat(),
+                    obj.getDouble("x").toFloat(),
+                    obj.getDouble("y").toFloat(),
+                    stripes
+                )
+            )
+        }
+
+        // Restore pocket
+        val pocketJson = prefs.getString(prefKey("calledPocket"), null)
+        if (!pocketJson.isNullOrEmpty()) {
+            val arr = JSONArray(pocketJson)
+            calledPocket = (0 until arr.length()).map { arr.getInt(it) }
+        }
+
+        val stripesInt = prefs.getInt(prefKey("iAmStripes"), 0)
+        iAmStripes  = if (stripesInt == 0) null else player == stripesInt
+        scratch     = prefs.getBoolean(prefKey("scratch"),   false)
+        call8Ball   = prefs.getBoolean(prefKey("call8Ball"), false)
+        isFirst     = prefs.getBoolean(prefKey("isFirst"),   false)
+        renderer.cueRot = prefs.getFloat(prefKey("cueRot"),  0f)
+
+        Log.i("Pool", "Restored ${outgoingReplayHits.size} outgoing hit(s), scratch=$scratch call8=$call8Ball")
+        return true
+    }
+
+    /**
+     * Wipe the saved state once the turn has been successfully transmitted.
+     */
+    private fun clearSavedGameState() {
+        prefs.edit()
+            .remove(prefKey("finalBalls"))
+            .remove(prefKey("replayHits"))
+            .remove(prefKey("calledPocket"))
+            .remove(prefKey("iAmStripes"))
+            .remove(prefKey("scratch"))
+            .remove(prefKey("call8Ball"))
+            .remove(prefKey("isFirst"))
+            .remove(prefKey("cueRot"))
+            .apply()
+        Log.i("Pool", "Saved game state cleared")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun showBallExpanded(ball: PoolBall) {
+        if (expandedBall != null) return
+        expandedBall = ball
+
+        val scrim    = findViewById<View>(R.id.ballScrim)
+        val expanded = findViewById<FrameLayout>(R.id.ballExpanded)
+        val spinner  = findViewById<SpinSelectorView>(R.id.spinSelectorView)
+
+        // sync dot to current spin
+        spinner.spinX = setSpinX / 30f
+        spinner.spinY = setSpinY / 30f
+        spinner.invalidate()
+
+        expanded.scaleX = 0f
+        expanded.scaleY = 0f
+        expanded.alpha  = 0f
+        expanded.isClickable = true
+        expanded.isFocusable = true
+        expanded.elevation = 32f
+
+        scrim.isClickable = true
+        scrim.isFocusable = true
+
+        expanded.setOnTouchListener { _, event ->
+            val halfW = expanded.width / 2f
+            val halfH = expanded.height / 2f
+            val rawX  = event.x - halfW
+            val rawY  = event.y - halfH
+            val radius = minOf(halfW, halfH)
+            val dist  = sqrt(rawX * rawX + rawY * rawY)
+            if (dist > radius) return@setOnTouchListener true
+
+            val normX = rawX / radius
+            val normY = rawY / radius
+            setSpinX = normX * 30f
+            setSpinY = normY * 30f
+
+            // update spinner dot
+            spinner.spinX = normX
+            spinner.spinY = normY
+            spinner.invalidate()
+
+            // keep small indicator in sync
+            val smallDot    = findViewById<ImageView>(R.id.cueDot)
+            val cueViewFrame = findViewById<FrameLayout>(R.id.cueView)
+            val smallRadius = cueViewFrame.width / 2f
+            val dotHalfW    = smallDot.width / 2f
+            val dotHalfH    = smallDot.height / 2f
+            smallDot.translationX = normX * smallRadius - dotHalfW + smallRadius
+            smallDot.translationY = normY * smallRadius - dotHalfH + smallRadius
+
+            true
+        }
+
+        expanded.animate()
+            .scaleX(1f).scaleY(1f).alpha(1f)
+            .setDuration(300)
+            .setInterpolator(android.view.animation.OvershootInterpolator(1.8f))
+            .start()
+
+        scrim.animate().alpha(0.6f).setDuration(220).start()
+
+        val dismiss = {
+            expandedBall = null
+            expanded.animate()
+                .scaleX(0f).scaleY(0f).alpha(0f)
+                .setDuration(200)
+                .setInterpolator(android.view.animation.AccelerateInterpolator())
+                .withEndAction {
+                    expanded.isClickable = false
+                    expanded.isFocusable = false
+                    scrim.isClickable    = false
+                    scrim.isFocusable    = false
+                    expanded.setOnTouchListener(null)
+                }
+                .start()
+            scrim.animate().alpha(0f).setDuration(200).start()
+        }
+
+        scrim.setOnClickListener { dismiss() }
+    }
+
+    @SuppressLint("ClickableViewAccessibility", "CutPasteId")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.setBackgroundDrawableResource(android.R.color.white)
+
 
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         supportActionBar?.hide()
@@ -91,17 +309,18 @@ class PoolActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_pool)
 
-        val glView = findViewById<GLSurfaceView>(R.id.ballGLView)
-        glView.setEGLContextClientVersion(2)
-        glView.setEGLConfigChooser(8,8,8,8,16,0)
-        glView.holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
-        glView.setZOrderMediaOverlay(true)
+
+
+        val glView = findViewById<GLTextureView>(R.id.ballGLView)
+
+        glView.isOpaque = false
+
         glView.setRenderer(BallGLRenderer(this) { poolBalls })
-        glView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+
+
 
         val aimingOverlay = findViewById<AimingOverlayView>(R.id.aimingOverlay)
         aimingOverlay.activity = this
-
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.surfaceView)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -110,27 +329,11 @@ class PoolActivity : AppCompatActivity() {
         }
 
         val cueView = findViewById<FrameLayout>(R.id.cueView)
-        val cueDot = findViewById<ImageView>(R.id.cueDot)
-        cueView.setOnTouchListener { v, event ->
-            if (mode != PoolMode.Aiming) return@setOnTouchListener true
-            val dotRadiusPx = TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP,
-                4f,
-                resources.displayMetrics
-            )
-            val normalizedX = ((event.x - dotRadiusPx) / (cueView.width - dotRadiusPx * 2)) * 2 - 1
-            val normalizedY = ((event.y - dotRadiusPx) / (cueView.height - dotRadiusPx * 2)) * 2 - 1
-            val dist = normalizedY * normalizedY + normalizedX * normalizedX
-            // need to subtract the distance of the rest of the red ball
-            if (dist > 1) {
-                // we are a unit circle, if we're more than a unit, that means we are outside the circle
-                return@setOnTouchListener true
-            }
-            setSpinX = normalizedX * 30
-            setSpinY = normalizedY * 30
-            cueDot.translationX = event.x - dotRadiusPx // center radius
-            cueDot.translationY = event.y - dotRadiusPx
-            true
+        val cueDot  = findViewById<ImageView>(R.id.cueDot)
+        cueView.setOnClickListener {
+            if (mode != PoolMode.Aiming) return@setOnClickListener
+            val cueBallBall = poolBalls.firstOrNull { it.number == 0 } ?: return@setOnClickListener
+            showBallExpanded(cueBallBall)
         }
 
         findViewById<Button>(R.id.skip_replay).setOnClickListener {
@@ -142,23 +345,29 @@ class PoolActivity : AppCompatActivity() {
         val container = findViewById<FrameLayout>(R.id.cueContainer)
         container.setOnTouchListener { v, event ->
             if (mode != PoolMode.Aiming) return@setOnTouchListener true
-
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    touchDownCueX = event.x
-                }
                 MotionEvent.ACTION_MOVE -> {
-                    val power = -min(event.x - touchDownCueX, 0.0f) / container.width * 2000
+                    val power = max(event.y - touchDownCueX, 0.0f) / container.height * 2000
                     setCueDrawAmount(power)
+                    val frac = power / 2000f
+                    val step = (frac * 20).toInt() / 20f  // 5% steps
+                    if (step != lastHapticFrac) {
+                        lastHapticFrac = step
+                        val intensity = (30 + (frac * 90)).toInt().coerceIn(1, 255)
+                        vibrateLight(intensity)
+                    }
+                }
+                MotionEvent.ACTION_DOWN -> {
+                    touchDownCueX = event.y
+                    lastHapticFrac = 0f
                 }
                 MotionEvent.ACTION_UP -> {
                     disableSend = false
-                    val power = -min(event.x - touchDownCueX, 0.0f) / container.width * 2000
+                    val power = max(event.y - touchDownCueX, 0.0f) / container.height * 2000
                     if (power < 100) {
                         setCueDrawAmount(0f)
                         return@setOnTouchListener true
                     }
-                    // snap back and hit
                     val hit = BallHit(renderer.cueRot, power, setSpinX, setSpinY, iAmStripes)
                     outgoingReplayHits.add(hit)
                     animateShoot(power, hit)
@@ -167,16 +376,17 @@ class PoolActivity : AppCompatActivity() {
             true
         }
 
-
         val view = findViewById<SurfaceView>(R.id.surfaceView)
+
         renderer = PoolRenderer(view.holder, this)
 
         view.setOnTouchListener { v, event ->
             val inverted = Matrix()
             renderer.transform.invert(inverted)
-
             val points = floatArrayOf(event.x, event.y)
             inverted.mapPoints(points)
+
+
             if (call8Ball) {
                 val clickedHole = holes.find {
                     val distX = points[0] - it[0]
@@ -187,22 +397,16 @@ class PoolActivity : AppCompatActivity() {
                 if (clickedHole == null) return@setOnTouchListener true
                 call8Ball = false
                 calledPocket = clickedHole
-
                 val label = findViewById<TextView>(R.id.state_label)
                 label.visibility = View.GONE
-
                 mode = PoolMode.Aiming
                 renderer.setCueVisible(true)
             } else if (mode == PoolMode.Aiming) {
                 val origPoints = points.copyOf()
-
-                // get distance between ball and finger
                 points[0] -= cueBall.x
                 points[1] -= cueBall.y
-
                 val position = -atan2(points[0], points[1])
-
-                when(event.actionMasked) {
+                when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         if (scratch && abs(points[0]) < 20 && abs(points[1]) < 20) {
                             draggingCue = true
@@ -215,23 +419,17 @@ class PoolActivity : AppCompatActivity() {
                                 val distX = ball.x - origPoints[0]
                                 val distY = ball.y - origPoints[1]
                                 val distance = sqrt(distX * distX + distY * distY)
-                                if (distance < 20f) {
-                                    // we overslap another ball, reject this move
-                                    return@setOnTouchListener true
-                                }
+                                if (distance < 20f) return@setOnTouchListener true
                             }
                             synchronized(this) {
                                 moveBall(table, 0, origPoints[0], origPoints[1], 0f)
                             }
                         } else {
                             var diff = position - lastAngle
-                            if (diff > PI) {
-                                diff -= PI.toFloat() * 2
-                            }
-                            if (diff < -PI) {
-                                diff += PI.toFloat() * 2
-                            }
-                            renderer.cueRot += diff * 0.5f
+                            if (diff > PI) diff -= PI.toFloat() * 2
+                            if (diff < -PI) diff += PI.toFloat() * 2
+                            val delta = diff * 0.5f
+                            renderer.cueRot += delta
                         }
                     }
                     MotionEvent.ACTION_UP -> {
@@ -239,7 +437,6 @@ class PoolActivity : AppCompatActivity() {
                     }
                 }
                 lastAngle = position
-                // this is our direction vector
                 Log.i("Point", "${points[0]} ${points[1]}")
             }
             true
@@ -265,6 +462,8 @@ class PoolActivity : AppCompatActivity() {
                 finish()
             }
         }
+
+
     }
 
     override fun onDestroy() {
@@ -332,6 +531,13 @@ class PoolActivity : AppCompatActivity() {
                 }
                 poolBalls.retainAll { !it.sunk }
                 hit.hit(this)
+
+                // ── Persist state immediately after each shot ──────────────
+                if (!replaying) {
+                    saveGameState()
+                }
+                // ──────────────────────────────────────────────────────────
+
                 val clearHandler = Handler(mainLooper)
                 clearHandler.postDelayed({
                     renderer.setCueVisible(false)
@@ -339,16 +545,12 @@ class PoolActivity : AppCompatActivity() {
                     setSpinX = 0f
                     setSpinY = 0f
                     val cueDot = findViewById<ImageView>(R.id.cueDot)
-                    cueDot.translationX = TypedValue.applyDimension(
-                        TypedValue.COMPLEX_UNIT_DIP,
-                        21f,
-                        resources.displayMetrics
-                    )
-                    cueDot.translationY = TypedValue.applyDimension(
-                        TypedValue.COMPLEX_UNIT_DIP,
-                        21f,
-                        resources.displayMetrics
-                    )
+                    val cueViewFrame = findViewById<FrameLayout>(R.id.cueView)
+                    val smallRadius = cueViewFrame.width / 2f
+                    val dotHalfW = cueDot.width / 2f
+                    val dotHalfH = cueDot.height / 2f
+                    cueDot.translationX = smallRadius - dotHalfW
+                    cueDot.translationY = smallRadius - dotHalfH
                     cancelAllShots = {}
                 }, 300)
                 cancelAllShots = {
@@ -533,10 +735,33 @@ class PoolActivity : AppCompatActivity() {
                 return
             }
 
+            fun TextView.animateTextChange(newText: String) {
+                val paint = this.paint
+                val paddingH = this.paddingStart + this.paddingEnd
+                val newTextWidth = paint.measureText(newText).toInt() + paddingH
+
+                val startWidth = if (this.width > 0) this.width else newTextWidth
+
+                this.text = newText
+
+                val animator = ValueAnimator.ofInt(startWidth, newTextWidth)
+                animator.duration = 200L
+                animator.interpolator = android.view.animation.DecelerateInterpolator()
+                animator.addUpdateListener { anim ->
+                    val lp = this.layoutParams
+                    lp.width = anim.animatedValue as Int
+                    this.layoutParams = lp
+                }
+                animator.start()
+            }
+
             runOnUiThread {
                 val label = findViewById<TextView>(R.id.state_label)
                 label.visibility = View.VISIBLE
-                label.text = "WAITING FOR OPPONENT"
+                label.animateTextChange("✓ SENT")
+                Handler(mainLooper).postDelayed({
+                    label.animateTextChange("WAITING FOR OPPONENT")
+                }, 1500L)
             }
 
             // send replay
@@ -562,9 +787,9 @@ class PoolActivity : AppCompatActivity() {
                     val label = findViewById<TextView>(R.id.state_label)
                     label.visibility = View.VISIBLE
                     if (winState) {
-                        label.text = "You won!"
+                        label.animateTextChange("You won!")
                     } else {
-                        label.text = "They won!"
+                        label.text = "You lost!"
                     }
                 }
             }
@@ -583,11 +808,29 @@ class PoolActivity : AppCompatActivity() {
 
             gameSessionIPC!!.updateSession(msgUpdates, sessionId) {
                 Log.i("openpigeon-${baseGame.getName()}", "Game session updated")
+                // ── Clear persisted state now that the turn is safely sent ──
+                clearSavedGameState()
             }
         }
     }
 
     var iAmStripes: Boolean? = null
+        set(value) {
+            field = value
+            refreshBallIndicators()
+        }
+
+    fun refreshBallIndicators() {
+        runOnUiThread {
+            val playerIndicator   = findViewById<BallTypeIndicatorView>(R.id.playerBallIndicator)
+            val opponentIndicator = findViewById<BallTypeIndicatorView>(R.id.opponentBallIndicator)
+
+            // iAmStripes:  true  → I have stripes,  false → I have solids,  null → unassigned
+            playerIndicator.isStripes   = iAmStripes
+            // Opponent is always the opposite once assigned
+            opponentIndicator.isStripes = iAmStripes?.let { !it }
+        }
+    }
 
     data class Quaternion(val w: Float, val x: Float, val y: Float, val z: Float) {
         companion object {
@@ -864,6 +1107,18 @@ class PoolActivity : AppCompatActivity() {
             buildBalls(finalBalls, null)
             scratch = true
 
+            // ── Restore any saved mid-turn state for this session ──────────
+            val restored = restoreGameState()
+            if (restored) {
+                // Re-build ball positions from the saved snapshot so the board
+                // matches where we left off before the app was killed.
+                clearBalls(table)
+                poolBalls.clear()
+                buildBalls(finalBalls, null)
+                Log.i("Pool", "Resumed from saved state with ${outgoingReplayHits.size} shot(s) already taken")
+            }
+            // ──────────────────────────────────────────────────────────────
+
             mode = PoolMode.Aiming
             runOnUiThread {
                 renderer.setCueVisible(true)
@@ -871,7 +1126,7 @@ class PoolActivity : AppCompatActivity() {
                 label.visibility = View.GONE
                 findViewById<Button>(R.id.skip_replay).visibility = View.GONE
             }
-            isFirst = true
+            isFirst = isFirst || (!restored) // keep isFirst true for a brand-new game
 
             if (!renderer.isAlive) {
                 renderer.start()

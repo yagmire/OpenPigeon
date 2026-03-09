@@ -3,24 +3,31 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF000000"
-    android:fitsSystemWindows="true"
-    android:textAlignment="center"
+    android:background="@drawable/pool_bg"
     tools:context=".pool.PoolActivity">
-
-
 
     <SurfaceView
         android:id="@+id/surfaceView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:layout_marginStart="52dp"
+        android:layout_marginEnd="52dp"
+        android:layout_marginTop="16dp"
+        android:background="#00000000"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="Pool table surface" />
 
-    <android.opengl.GLSurfaceView
+    <com.openbubbles.openpigeon.pool.GLTextureView
         android:id="@+id/ballGLView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_marginStart="52dp"
+        android:layout_marginEnd="52dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
         android:clickable="false"
         android:focusable="false" />
 
@@ -28,76 +35,153 @@
         android:id="@+id/aimingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_marginStart="52dp"
+        android:layout_marginEnd="52dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
         android:clickable="false"
-        android:focusable="false" />
+        android:background="#00000000"
+        android:focusable="false"
+        android:importantForAccessibility="no" />
 
+    <TextView
+        android:id="@+id/state_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:maxWidth="320dp"
+        android:layout_marginHorizontal="24dp"
+        android:background="@drawable/state_label_bg"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp"
+        android:text="WAITING FOR OPPONENT"
+        android:fontFamily="@font/fivosans_black"
+        android:textAlignment="center"
+        android:textColor="@color/white"
+        android:maxLines="1"
+        android:ellipsize="none"
+        android:visibility="visible" />
+
+    <!-- Left rail: ball type indicator + vertical power slider -->
     <LinearLayout
         android:id="@+id/controls"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:layout_marginHorizontal="20dp"
-        android:layout_marginTop="10dp"
-        android:layout_marginBottom="10dp"
-        android:orientation="horizontal">
+        android:layout_width="44dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <!-- Player ball type indicator (solid/stripe/unknown) -->
+        <com.openbubbles.openpigeon.pool.BallTypeIndicatorView
+            android:id="@+id/playerBallIndicator"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginBottom="8dp"
+            android:contentDescription="Your ball type" />
 
         <FrameLayout
             android:id="@+id/cueContainer"
-            android:layout_width="0dp"
-            android:layout_height="30dp"
-            android:layout_gravity="center"
-            android:layout_weight="1"
+            android:layout_width="36dp"
+            android:layout_height="200dp"
             android:background="@drawable/cue_drag_bg"
             android:clipToOutline="true"
-            android:outlineProvider="background">
+            android:outlineProvider="background"
+            android:contentDescription="Drag down to set shot power">
 
             <ImageView
                 android:id="@+id/cueTip"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:layout_gravity="right|center_vertical"
-                android:background="#ff333333"
-                android:paddingRight="2dp"
-                android:src="@drawable/cue" />
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal"
+                android:background="#FF333333"
+                android:paddingBottom="2dp"
+                android:src="@drawable/cue"
+                android:importantForAccessibility="no" />
         </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Right rail: opponent ball type indicator + spin indicator -->
+    <LinearLayout
+        android:layout_width="44dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <!-- Opponent ball type indicator -->
+        <com.openbubbles.openpigeon.pool.BallTypeIndicatorView
+            android:id="@+id/opponentBallIndicator"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginBottom="8dp"
+            android:contentDescription="Opponent ball type" />
 
         <FrameLayout
             android:id="@+id/cueView"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:layout_marginLeft="10dp"
-            android:background="@drawable/cue_item">
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/cue_item"
+            android:contentDescription="Tap to set spin">
 
             <ImageView
                 android:id="@+id/cueDot"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:translationX="21dp"
-                android:translationY="21dp"
-                app:srcCompat="@drawable/cue_point" />
+                android:translationX="15dp"
+                android:translationY="15dp"
+                app:srcCompat="@drawable/cue_point"
+                android:importantForAccessibility="no" />
         </FrameLayout>
+
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/state_label"
-        android:layout_width="287dp"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:background="@drawable/state_label_bg"
-        android:padding="10dp"
-        android:text="WAITING FOR OPPONENT"
-        android:fontFamily="@font/fivosans_black"
-        android:textAlignment="center"
-        android:textColor="@color/white" />
+    <!-- Scrim -->
+    <View
+        android:id="@+id/ballScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:alpha="0"
+        android:clickable="false"
+        android:focusable="false" />
 
+    <!-- Expanded spin selector overlay -->
+    <FrameLayout
+        android:id="@+id/ballExpanded"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:layout_gravity="center"
+        android:scaleX="0"
+        android:scaleY="0"
+        android:alpha="0"
+        android:clickable="false"
+        android:focusable="false">
+
+        <com.openbubbles.openpigeon.pool.SpinSelectorView
+            android:id="@+id/spinSelectorView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </FrameLayout>
+
+    <!-- Skip replay button anchored bottom-center -->
     <Button
         android:id="@+id/skip_replay"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_height="36dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="100dp"
-        android:background="#03A9F4"
-        android:text="Skip"
-        android:textColor="#4A148C" />
+        android:layout_marginBottom="16dp"
+        android:paddingHorizontal="24dp"
+        android:text="Skip Replay"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:letterSpacing="0.05"
+        android:visibility="gone"
+        tools:visibility="visible" />
 
 </FrameLayout>

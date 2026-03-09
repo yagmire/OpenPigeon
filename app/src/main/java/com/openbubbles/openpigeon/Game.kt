@@ -118,10 +118,22 @@ interface Game {
         var imageEncoded: String? = null
         if (currentSession == null) {
             val bm = BitmapFactory.decodeResource(context.resources, gamePoster(message))
-            val baos = ByteArrayOutputStream()
-            bm.compress(Bitmap.CompressFormat.JPEG, 70, baos)
-            val b = baos.toByteArray()
-            imageEncoded = Base64.encodeToString(b, Base64.NO_WRAP)
+            if (bm != null) {
+                val baos = ByteArrayOutputStream()
+                // Scale down to a thumbnail before encoding — binder limit is ~1MB
+                val maxDim = 300
+                val scale = maxDim.toFloat() / maxOf(bm.width, bm.height)
+                val scaled = if (scale < 1f) {
+                    android.graphics.Bitmap.createScaledBitmap(
+                        bm,
+                        (bm.width * scale).toInt(),
+                        (bm.height * scale).toInt(),
+                        true
+                    )
+                } else bm
+                scaled.compress(Bitmap.CompressFormat.JPEG, 70, baos)
+                imageEncoded = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            }
         }
 
         return MadridMessage().apply {

@@ -40,6 +40,13 @@ class BallGLRenderer(
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         program = buildProgram(VERT, FRAG)
         buildSphere(stacks = 24, slices = 24)
+        GLES20.glClearColor(0f, 0f, 0f, 0f)
+
+        locMVP     = GLES20.glGetUniformLocation(program, "uMVP")
+        locRot     = GLES20.glGetUniformLocation(program, "uRot")
+        locBallTex = GLES20.glGetUniformLocation(program, "uBallTex")
+        locPos     = GLES20.glGetAttribLocation(program, "aPos")
+        locUV      = GLES20.glGetAttribLocation(program, "aUV")
     }
 
     private val VERT = """
@@ -59,19 +66,31 @@ class BallGLRenderer(
     """.trimIndent()
 
     private val FRAG = """
-        precision mediump float;
-        varying vec2 vUV;
-        uniform sampler2D uBallTex;
-        void main() {
-            vec4 ballColor = texture2D(uBallTex, vUV);
-            gl_FragColor = ballColor;
-        }
+precision mediump float;
+varying vec2 vUV;
+uniform sampler2D uBallTex;
+
+void main() {
+    vec4 ballColor = texture2D(uBallTex, vUV);
+
+    // kill transparent pixels
+    if (ballColor.a < 0.01) discard;
+
+    gl_FragColor = ballColor;
+}
     """.trimIndent()
 
     private var program = 0
     private var sphereVBO = 0
     private var sphereIBO = 0
     private var indexCount = 0
+
+    // Cached uniform/attribute locations — set once after program is linked
+    private var locMVP = 0
+    private var locRot = 0
+    private var locBallTex = 0
+    private var locPos = 0
+    private var locUV = 0
 
     fun drawBall(
         ballTexId: Int,
@@ -90,20 +109,18 @@ class BallGLRenderer(
         Matrix.scaleM(model, 0, radiusPx, radiusPx, radiusPx)
         Matrix.multiplyMM(mvp, 0, vpMatrix, 0, model, 0)
 
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uMVP"), 1, false, mvp, 0)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uRot"), 1, false, rotMatrix, 0)
+        GLES20.glUniformMatrix4fv(locMVP, 1, false, mvp, 0)
+        GLES20.glUniformMatrix4fv(locRot, 1, false, rotMatrix, 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ballTexId)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uBallTex"), 0)
+        GLES20.glUniform1i(locBallTex, 0)
 
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, sphereVBO)
-        val posLoc = GLES20.glGetAttribLocation(program, "aPos")
-        GLES20.glEnableVertexAttribArray(posLoc)
-        GLES20.glVertexAttribPointer(posLoc, 3, GLES20.GL_FLOAT, false, 20, 0)
-        val uvLoc = GLES20.glGetAttribLocation(program, "aUV")
-        GLES20.glEnableVertexAttribArray(uvLoc)
-        GLES20.glVertexAttribPointer(uvLoc, 2, GLES20.GL_FLOAT, false, 20, 12)
+        GLES20.glEnableVertexAttribArray(locPos)
+        GLES20.glVertexAttribPointer(locPos, 3, GLES20.GL_FLOAT, false, 20, 0)
+        GLES20.glEnableVertexAttribArray(locUV)
+        GLES20.glVertexAttribPointer(locUV, 2, GLES20.GL_FLOAT, false, 20, 12)
 
         GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, sphereIBO)
         GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, 0)
@@ -112,6 +129,7 @@ class BallGLRenderer(
     private var screenWidth = 1
     private var screenHeight = 1
     private var activity: PoolActivity? = null
+    private val scratchPoints = FloatArray(2) // reused every frame to avoid allocation
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
@@ -120,11 +138,12 @@ class BallGLRenderer(
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        GLES20.glClearColor(0f, 0f, 0f, 0f)
+        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f) // Alpha 0
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
+
 
         val vpMatrix = FloatArray(16)
         android.opengl.Matrix.orthoM(vpMatrix, 0,
@@ -138,12 +157,13 @@ class BallGLRenderer(
         for (ball in balls) {
             if (ball.sunk) continue
 
-            val tablePoints = floatArrayOf(ball.x, ball.y)
+            scratchPoints[0] = ball.x
+            scratchPoints[1] = ball.y
             val transform = act.renderer.transform
-            transform.mapPoints(tablePoints)
+            transform.mapPoints(scratchPoints)
 
-            val screenX = tablePoints[0]
-            val screenY = tablePoints[1]
+            val screenX = scratchPoints[0]
+            val screenY = scratchPoints[1]
             val scale = screenWidth / 441.189f
             val radiusPx = 10f * scale
 

@@ -139,10 +139,12 @@ class MadridExtension(val context: Context) : IMadridExtension.Stub() {
         currentKeyboardHandle = null
         callback = null
         configuringGame = null
+        pendingSession = null
     }
 
     var configuringGame: Game? = null
     var currentPage: Int = 0
+    var pendingSession: String? = null
 
     @Composable
     fun MainKeyboard() {
@@ -270,13 +272,6 @@ class ChooseGameCallback : ActionCallback {
     ) {
         val game = parameters[gameName]?.let { MadridExtension.findByName(it) } ?: return
 
-        if (game.isConfigurable()) {
-            MadridExtensionService.extension?.let {
-                it.configuringGame = game
-                it.updateKeyboard()
-            }
-        }
-
         if (MadridExtension.currentUserCount < game.minPlayerRequirement()) {
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(context, "Minimum ${game.minPlayerRequirement()} players required for this game!", Toast.LENGTH_LONG).show()
@@ -284,9 +279,19 @@ class ChooseGameCallback : ActionCallback {
             return
         }
 
-        val message = game.buildGameMessage(context, game.getNewGameData(context) ?: return, null)
-
+        // Always attach with defaults first
+        val data = game.getNewGameData(context) ?: return
+        val message = game.buildGameMessage(context, data, null)
         MadridExtension.currentKeyboardHandle?.addMessage(message)
+
+        if (game.isConfigurable()) {
+            // Store the session so ConfigureCallback can replace it
+            MadridExtensionService.extension?.let {
+                it.pendingSession = message.session
+                it.configuringGame = game
+                it.updateKeyboard()
+            }
+        }
     }
 }
 
@@ -297,7 +302,6 @@ class GoBackCallback : ActionCallback {
         parameters: ActionParameters
     ) {
         MadridExtensionService.extension?.let {
-            it.configuringGame = null
             it.updateKeyboard()
         }
     }
@@ -474,20 +478,30 @@ fun RenderKeyboardPreview() {
 private val configName = ActionParameters.Key<String>("configName")
 private val configVal = ActionParameters.Key<String>("configVal")
 class ConfigureCallback : ActionCallback {
-    override suspend fun onAction(
-        context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
-    ) {
-        val game = parameters[gameName]?.let { MadridExtension.findByName(it) } ?: return
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val game = parameters[gameName]?.let { MadridExtension.findByName(it) } ?: run {
+            Log.e("ConfigureCallback", "game not found")
+            return
+        }
 
         game.setConfigOption(parameters[configName]!!, parameters[configVal]!!)
 
-        val message = game.buildGameMessage(context, game.getNewGameData(context) ?: return, null)
-        MadridExtension.currentKeyboardHandle?.addMessage(message)
+        val data = game.getNewGameData(context) ?: run {
+            Log.e("ConfigureCallback", "getNewGameData returned null")
+            return
+        }
 
-        if (game.isConfigurable()) {
-            MadridExtensionService.extension?.updateKeyboard()
+        // Reuse the pending session so the host replaces the existing attachment
+        val session = MadridExtensionService.extension?.pendingSession
+        val message = game.buildGameMessage(context, data, currentSession = session)
+
+        MadridExtension.currentKeyboardHandle?.addMessage(message)
+            ?: Log.e("ConfigureCallback", "handle is null, message not sent")
+
+        MadridExtensionService.extension?.let {
+            it.pendingSession = message.session  // keep updated in case they change mode again
+            it.configuringGame = null
+            it.updateKeyboard()
         }
     }
 }

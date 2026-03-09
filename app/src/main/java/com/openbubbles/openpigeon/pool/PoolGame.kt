@@ -30,9 +30,7 @@ class PoolGame : Game {
     var hard = false
 
     @Composable
-    override fun Configuration(
-        context: Context?,
-    ) {
+    override fun Configuration(context: Context?) {
         Box(modifier = GlanceModifier.padding(16.dp)) {
             RenderConfigOption(this, "Difficulty", listOf("Normal", "Hard"), if (hard) "Hard" else "Normal")
         }
@@ -47,7 +45,8 @@ class PoolGame : Game {
     }
 
     override fun gamePoster(config: Map<String, String>?): Int {
-        return R.drawable.pool_image
+        val isHard = config?.get("mode") == "h" || (config == null && hard)
+        return if (isHard) R.drawable.pool_image_hard else R.drawable.pool_image
     }
 
     override fun getNewGameData(context: Context): MutableMap<String, String>? {

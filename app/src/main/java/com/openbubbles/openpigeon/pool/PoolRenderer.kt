@@ -7,7 +7,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.util.Log
 import android.view.SurfaceHolder
@@ -22,11 +21,18 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
 import android.graphics.BlurMaskFilter
+import kotlin.math.sign
 
 class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thread(), SurfaceHolder.Callback {
     var running = true
 
-    val bitmap: Bitmap = BitmapFactory.decodeResource(activity.resources, R.drawable.`pool_transparent`)
+    val bitmap: Bitmap by lazy {
+        BitmapFactory.decodeResource(
+            activity.resources,
+            if (activity.isHard) R.drawable.pool_transparent_hard else R.drawable.`pool_transparent`
+        )
+    }
+
     val cue: Bitmap = BitmapFactory.decodeResource(activity.resources, R.drawable.cue)
 
     init {
@@ -41,15 +47,29 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
     var cueAlpha = 1.0f
     var cuePos = floatArrayOf(0f, 0f)
 
+    private val _transform = Matrix()
+    private var lastSurfaceWidth = -1
+    private var lastSurfaceHeight = -1
+
     val transform: Matrix
-        get() = Matrix().apply {
-            val desiredWidth = 441.189f
-            val desiredHeight = 784.743f
-            val scale = holder.surfaceFrame.width() / desiredWidth
-            postScale(scale, -scale)
-            postRotate(-90f)
-            val extra = (holder.surfaceFrame.height().toFloat() - desiredHeight * scale) / 2
-            postTranslate(holder.surfaceFrame.width().toFloat(), holder.surfaceFrame.height().toFloat() - extra)
+        get() {
+            val w = holder.surfaceFrame.width()
+            val h = holder.surfaceFrame.height()
+            if (w != lastSurfaceWidth || h != lastSurfaceHeight) {
+                lastSurfaceWidth = w
+                lastSurfaceHeight = h
+                val desiredWidth  = 441.189f
+                val desiredHeight = 784.743f
+                val insetPx = 12f
+                val availableWidth = w - insetPx * 2
+                val scale = availableWidth / desiredWidth
+                _transform.reset()
+                _transform.postScale(scale, -scale)
+                _transform.postRotate(-90f)
+                val extra = (h.toFloat() - desiredHeight * scale) / 2
+                _transform.postTranslate(w.toFloat() - insetPx, h.toFloat() - extra)
+            }
+            return _transform
         }
 
 
@@ -63,9 +83,24 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
 
     private fun drawFrame(canvas: Canvas) {
         synchronized(activity) {
-            canvas.concat(transform)
+            val w = canvas.width.toFloat()
+            val h = canvas.height.toFloat()
 
-            canvas.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR)
+            // Only rebuild gradient when surface size changes
+            if (w != lastGradientW || h != lastGradientH) {
+                lastGradientW = w
+                lastGradientH = h
+                gradientPaint.shader = android.graphics.RadialGradient(
+                    w / 2f, h / 2f,
+                    maxOf(w, h) * 0.6f,
+                    intArrayOf(0xFFF0EFE9.toInt(), 0xFFB0AEA8.toInt()),
+                    floatArrayOf(0f, 1f),
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawPaint(gradientPaint)
+
+            canvas.concat(transform)
 
             if (!update(activity.table) && activity.mode == PoolActivity.PoolMode.Playing) {
                 activity.handleFinishPlay()
@@ -73,10 +108,58 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
 
             canvas.drawBitmap(bitmap, null, RectF(-0.057f, -0.189f, 784.743f, 441.189f), null)
 
-            val shadowPaint = Paint().apply { // cool shadows
-                color = 0x66000000
-                isAntiAlias = true
-                maskFilter = BlurMaskFilter(8f, BlurMaskFilter.Blur.NORMAL)
+            if (false) {
+                val debugPaint = Paint().apply {
+                    color = 0xFFFF00FF.toInt() // magenta
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f
+                    isAntiAlias = true
+                }
+                val pocketPaint = Paint().apply {
+                    color = 0xFF00FFFF.toInt() // cyan
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f
+                    isAntiAlias = true
+                }
+                val labelPaint = Paint().apply {
+                    color = 0xFFFFFF00.toInt() // yellow
+                    textSize = 14f
+                    isAntiAlias = true
+                }
+
+                // Approximate inner cushion wall bounds
+                // Table bitmap spans roughly 0..784 x 0..441
+                // Corner pockets sit at ~40,40 / 744,40 / 40,400 / 744,400
+                // Side pockets at ~392,28 / 392,412
+                // Cushion walls inset from pocket edges
+                val left   = 60f
+                val right  = 724f
+                val top    = 55f
+                val bottom = 386f
+
+                // Left wall (two segments around the side pocket gap)
+                canvas.drawLine(left, top + 20f,    left, bottom - 20f, debugPaint)
+                // Right wall
+                canvas.drawLine(right, top + 20f,   right, bottom - 20f, debugPaint)
+                // Top wall (two segments with gap at corner pockets)
+                canvas.drawLine(left + 20f, top,    392f - 18f, top, debugPaint)
+                canvas.drawLine(392f + 18f, top,    right - 20f, top, debugPaint)
+                // Bottom wall
+                canvas.drawLine(left + 20f, bottom, 392f - 18f, bottom, debugPaint)
+                canvas.drawLine(392f + 18f, bottom, right - 20f, bottom, debugPaint)
+
+                // Draw pockets
+                for ((i, hole) in activity.holes.withIndex()) {
+                    canvas.drawCircle(hole[0].toFloat(), hole[1].toFloat(), 20f, pocketPaint)
+                    canvas.drawText("P$i", hole[0].toFloat() - 7f, hole[1].toFloat() + 5f, labelPaint)
+                }
+
+                // Table bounding box (full bitmap rect)
+                canvas.drawRect(0f, 0f, 784.743f, 441.189f, Paint().apply {
+                    color = 0x44FFFFFF
+                    style = Paint.Style.STROKE
+                    strokeWidth = 1f
+                })
             }
 
             for (ball in activity.poolBalls) {
@@ -87,168 +170,38 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
 
             if (activity.call8Ball) {
                 for (hole in activity.holes) {
-                    canvas.drawCircle(
-                        hole[0].toFloat(),
-                        hole[1].toFloat(),
-                        20f,
-                        Paint().apply {
-                            color = 0x55FFFFFF
-                        }
-                    )
+                    canvas.drawCircle(hole[0].toFloat(), hole[1].toFloat(), 20f, holePaint)
                 }
             }
 
-            if (activity.mode == PoolActivity.PoolMode.Aiming || activity.mode == PoolActivity.PoolMode.ReplayAiming || activity.mode == PoolActivity.PoolMode.Playing) {
-                val translation = if (activity.mode != PoolActivity.PoolMode.Playing) floatArrayOf(
-                    activity.cueBall.x,
-                    activity.cueBall.y
-                ) else cuePos
+            if (activity.mode == PoolActivity.PoolMode.Aiming ||
+                activity.mode == PoolActivity.PoolMode.ReplayAiming ||
+                activity.mode == PoolActivity.PoolMode.Playing) {
 
-                if (activity.mode == PoolActivity.PoolMode.Aiming) {
+                val translation = if (activity.mode != PoolActivity.PoolMode.Playing)
+                    floatArrayOf(activity.cueBall.x, activity.cueBall.y)
+                else cuePos
 
-                    if (activity.scratch) {
-                        // draw halo around cue ball to indicate it is a touch target
-                        canvas.drawCircle(
-                            activity.cueBall.x,
-                            activity.cueBall.y,
-                            15f,
-                            Paint().apply {
-                                color = Color.WHITE
-                                strokeWidth = 2.5f
-                                style = Paint.Style.STROKE
-                            })
-                    }
-
-                    var closestBall: PoolActivity.PoolBall? = null
-                    var closestDistance = Float.MAX_VALUE
-                    var hitPointX = 0F
-                    var hitPointY = 0F
-                    // hit visualization time!
-                    // see if we hit any balls
-                    for (ball in activity.poolBalls) {
-                        if (ball.number == 0 || ball.sunk) continue // cue can't hit itself
-
-                        // the pool ball's trajectory is a line at an angle.
-                        // The spot where the ball will collide can be represented as a circle of radius otherBall + ourBall = 20
-                        // where the line and the circle intersect is our hit location.
-
-                        // let's move our cue ball to position 0, 0 to make our lives easier
-                        val otherBallX = ball.x - activity.cueBall.x;
-                        val otherBallY = ball.y - activity.cueBall.y;
-
-                        val slope = tan(cueRot)
-                        // equation is derived here: https://math.stackexchange.com/questions/228841/how-do-i-calculate-the-intersections-of-a-straight-line-and-a-circle
-                        // c is dropped because it is zero (remember we moved the origin?)
-                        val A = slope * slope + 1
-                        val B = 2 * (-slope * otherBallY - otherBallX)
-                        val C = otherBallY * otherBallY + otherBallX * otherBallX - 400
-                        val discriminant = B * B - 4 * A * C
-                        if (discriminant <= 0) continue // we miss circle, or are tangent (consider miss)
-
-                        // now we're going to have two answers, one bigger and one smaller.
-                        // we want to know the first point of contact, so what matters is if our angle points right (smaller one)
-                        // or points left (bigger one)
-                        val pointsRight = cos(cueRot) > 0
-                        val direction = if (pointsRight) -1 else 1
-                        val xCoord = (-B + sqrt(discriminant) * direction) / 2 / A
-
-                        // throw away balls that are behind us
-                        if (pointsRight && xCoord < 0) continue
-                        if (!pointsRight && xCoord > 0) continue
-
-                        if (abs(xCoord) < closestDistance) {
-                            closestDistance = abs(xCoord)
-                            closestBall = ball
-                            hitPointY = slope * xCoord + activity.cueBall.y
-                            hitPointX = xCoord + activity.cueBall.x
-                        }
-                    }
-                    if (closestBall != null) {
-                        // now we know where we hit, so let's draw a circle there.
-                        val paint = Paint().apply {
-                            color = Color.WHITE
-                            strokeWidth = 2.5f
-                            style = Paint.Style.STROKE
-                        }
-                        canvas.drawCircle(hitPointX, hitPointY, 9f, paint)
-                        canvas.drawLine(
-                            hitPointX - cos(cueRot) * 10f,
-                            hitPointY - sin(cueRot) * 10f,
-                            activity.cueBall.x + cos(cueRot) * 10f,
-                            activity.cueBall.y + sin(cueRot) * 10f,
-                            paint
-                        )
-
-                        val stripes = activity.iAmStripes
-                        val ballNotMine =
-                            stripes != null && ((stripes && !closestBall.isStripe) || (!stripes && !closestBall.isSolid))
-                        val hasMoreBalls = stripes == null || activity.poolBalls.count { !it.sunk && ((stripes && it.isStripe) || (!stripes && it.isSolid)) } != 0
-                        if ((ballNotMine || (closestBall.number == 8 && hasMoreBalls)) && (closestBall.number != 8 || hasMoreBalls)) {
-                            // this is an invalid move
-                            canvas.drawLine(
-                                hitPointX - 10,
-                                hitPointY - 10,
-                                hitPointX + 10,
-                                hitPointY + 10,
-                                paint,
-                            )
-                            canvas.drawLine(
-                                hitPointX + 10,
-                                hitPointY - 10,
-                                hitPointX - 10,
-                                hitPointY + 10,
-                                paint,
-                            )
-                        } else if (!activity.isHard) {
-                            val interBallX = closestBall.x - hitPointX
-                            val interBallY = closestBall.y - hitPointY
-
-                            val interBallAngle = atan2(interBallY, interBallX)
-                            val directness = (angleDifference(
-                                interBallAngle.toDouble(),
-                                cueRot.toDouble()
-                            ) / (PI / 2)).toFloat()
-                            canvas.drawLine(
-                                closestBall.x,
-                                closestBall.y,
-                                closestBall.x + cos(interBallAngle) * 70f * (1 - abs(directness)),
-                                closestBall.y + sin(interBallAngle) * 70f * (1 - abs(directness)),
-                                paint,
-                            )
-
-                            var tangentAngle = interBallAngle
-                            if (directness < 0) {
-                                tangentAngle += PI.toFloat() / 2
-                            } else {
-                                tangentAngle -= PI.toFloat() / 2
-                            }
-
-                            canvas.drawLine(
-                                hitPointX + cos(tangentAngle) * 10f,
-                                hitPointY + sin(tangentAngle) * 10f,
-                                hitPointX + cos(tangentAngle) * 10f + cos(tangentAngle) * 70f * abs(
-                                    directness
-                                ),
-                                hitPointY + sin(tangentAngle) * 10f + sin(tangentAngle) * 70f * abs(
-                                    directness
-                                ),
-                                paint,
-                            )
-                        }
-                    }
-                }
-
-                // draw cue
+                val degrees = Math.toDegrees(cueRot.toDouble()).toFloat()
+                canvas.save()
                 canvas.translate(translation[0], translation[1])
-                canvas.rotate(Math.toDegrees(cueRot.toDouble()).toFloat())
+                canvas.rotate(degrees - 90f)
 
+                val gap = 20f + cueDraw
+                val cueLength = 325f
+                val halfWidth = 8f
+
+                val centerY = -(gap + cueLength / 2f)
+                canvas.scale(1f, -1f, 0f, centerY)
+
+                cuePaint.alpha = (cueAlpha * 255).roundToInt()
                 canvas.drawBitmap(
                     cue,
                     null,
-                    RectF(-520f - 20f - cueDraw, -5.0f, -20.0f - cueDraw, 5.0f),
-                    Paint().apply {
-                        alpha = (cueAlpha * 255).roundToInt()
-                    })
+                    RectF(-halfWidth, -gap - cueLength, halfWidth, -gap),
+                    cuePaint
+                )
+                canvas.restore()
             }
             activity.runOnUiThread {
                 activity.findViewById<AimingOverlayView>(R.id.aimingOverlay).invalidate()
@@ -268,16 +221,31 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
     }
 
     var hasSurface = false
+
+    // Cached paints — allocated once, reused every frame
+    private val gradientPaint = Paint()
+    private val shadowPaint = Paint().apply {
+        color = 0x66000000
+        isAntiAlias = true
+        maskFilter = BlurMaskFilter(8f, BlurMaskFilter.Blur.NORMAL)
+    }
+    private val holePaint = Paint().apply { color = 0x55FFFFFF }
+    private val cuePaint = Paint()
+    private var lastGradientW = -1f
+    private var lastGradientH = -1f
     override fun run() {
         var startTime: Long
         var timeMillis: Long
         var waitTime: Long
         var frame = 0L
 
+
         while (running) {
             startTime = System.nanoTime()
 
+
             if (hasSurface) {
+
                 val canvas = holder.lockHardwareCanvas()
                 if (canvas != null) {
                     drawFrame(canvas)
