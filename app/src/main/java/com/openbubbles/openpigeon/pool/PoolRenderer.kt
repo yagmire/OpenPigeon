@@ -60,18 +60,30 @@ class PoolRenderer(val holder: SurfaceHolder, val activity: PoolActivity) : Thre
                 lastSurfaceHeight = h
                 val desiredWidth  = 441.189f
                 val desiredHeight = 784.743f
+                // Reproduce the visual inset that used to come from XML margins
+                // (52 dp sides, 16 dp top/bottom) plus the original 12 px inner inset.
+                val density = activity.resources.displayMetrics.density
+                val sideMarginPx = 52f * density
                 val insetPx = 12f
-                val availableWidth = w - insetPx * 2
+                val totalSideInset = sideMarginPx + insetPx
+                val availableWidth = w - totalSideInset * 2
                 val scale = availableWidth / desiredWidth
                 _transform.reset()
                 _transform.postScale(scale, -scale)
                 _transform.postRotate(-90f)
                 val extra = (h.toFloat() - desiredHeight * scale) / 2
-                _transform.postTranslate(w.toFloat() - insetPx, h.toFloat() - extra)
+                _transform.postTranslate(w.toFloat() - totalSideInset, h.toFloat() - extra)
             }
             return _transform
         }
 
+
+    /** Pixel scale factor: how many screen pixels per table unit. */
+    val tableScale: Float get() {
+        val vals = FloatArray(9)
+        transform.getValues(vals)
+        return kotlin.math.sqrt(vals[0] * vals[0] + vals[3] * vals[3])
+    }
 
     fun angleDifference(a: Double, b: Double): Double {
         var diff = (a - b + PI) % (2 * PI)

@@ -164,7 +164,9 @@ void main() {
 
             val screenX = scratchPoints[0]
             val screenY = scratchPoints[1]
-            val scale = screenWidth / 441.189f
+            // Derive scale from the renderer's transform so it matches the
+            // table size regardless of how large the GL view's surface is.
+            val scale = act.renderer.tableScale
             val radiusPx = 10f * scale
 
             drawBall(
