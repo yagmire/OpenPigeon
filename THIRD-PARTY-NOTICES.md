@@ -35,6 +35,15 @@ be removed.
 **Box2D** - MIT License
 `app/src/main/cpp/box2d` (git submodule)
 
+**Android Game Development Kit (Swappy frame pacing)** - Apache License 2.0
+`app/src/main/java/com/google/androidgamesdk/`
+<https://android.googlesource.com/platform/frameworks/opt/gamesdk/+/refs/heads/main/games-frame-pacing/extras/>
+
+`ChoreographerCallback.java` and `SwappyDisplayManager.java` are vendored
+verbatim from AGDK. Godot statically links Swappy's native half and looks these
+classes up by name; shipping them keeps Swappy off its in-memory DEX fallback,
+which hardened Android builds block. See the header comments in those files.
+
 ---
 
 ## Creative Commons assets
