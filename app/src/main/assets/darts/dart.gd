@@ -12,14 +12,24 @@ const ROTATION_SPEED_MIN := 0.12
 const ROTATION_SPEED_RANGE := 0.05
 const FADE_RETAIN_PER_FRAME := 0.92
 const MODEL_FORWARD_AXIS := Vector3(0.0, -1.0, 0.0)
-const FLIGHT_SURFACES: Array[int] = [2, 3, 4, 5, 6]
+const DART_SURFACES: Array[int] = [0, 1, 2, 3, 4, 5, 6]
 const DART_STYLE_DIR := "res://darts/darttex"
-const DART_STYLE_MAX: int = 64
-const DART_FLIGHT_BASE_COLOR := Color(1.0, 0.0, 0.0, 1.0)
+const DART_STYLE_MIN: int = 0
+const DART_STYLE_MAX: int = 21
+const DART_FALLBACK_COLOR := Color.WHITE
+const DART_PREVIEW_DIR := "res://darts"
+
+static func dart_preview_path(style: int) -> String:
+	var preview_path := "%s/darts_ui_dart%04d_Normal@3x.png" % [DART_PREVIEW_DIR, style]
+
+	if ResourceLoader.exists(preview_path):
+		return preview_path
+
+	return dart_style_path(style)
 
 static var _flight_material: StandardMaterial3D = null
 static var _dart_styles_cache: Array[int] = []
-static var active_dart_style: int = 1
+static var active_dart_style: int = 0
 
 var finished: bool = false
 var is_mine: bool = false
@@ -50,13 +60,13 @@ func dbg(msg: String) -> void:
 		OpLog.d(LOG_TAG, msg)
 
 static func dart_style_path(style: int) -> String:
-	return "%s/dart%d.png" % [DART_STYLE_DIR, style]
+	return "%s/dart%02d.png" % [DART_STYLE_DIR, style]
 
 static func available_dart_styles() -> Array[int]:
 	if not _dart_styles_cache.is_empty():
 		return _dart_styles_cache
 
-	for style: int in range(1, DART_STYLE_MAX + 1):
+	for style: int in range(DART_STYLE_MIN, DART_STYLE_MAX + 1):
 		if ResourceLoader.exists(dart_style_path(style)):
 			_dart_styles_cache.append(style)
 
@@ -65,34 +75,48 @@ static func available_dart_styles() -> Array[int]:
 static func flight_material() -> StandardMaterial3D:
 	if _flight_material == null:
 		_flight_material = StandardMaterial3D.new()
-		set_dart_style(active_dart_style)
+		_flight_material.roughness = 0.8
+		_flight_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		_flight_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_flight_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	return _flight_material
 
 static func set_dart_style(style: int) -> void:
-	active_dart_style = maxi(1, style)
+	active_dart_style = clampi(style, DART_STYLE_MIN, DART_STYLE_MAX)
 
 	if _flight_material == null:
 		_flight_material = StandardMaterial3D.new()
+		_flight_material.roughness = 0.8
+		_flight_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		_flight_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	var path: String = dart_style_path(active_dart_style)
+	var path := dart_style_path(active_dart_style)
 
 	if ResourceLoader.exists(path):
-		_flight_material.albedo_texture = load(path) as Texture2D
-		_flight_material.albedo_color = Color.WHITE
+		var texture := load(path) as Texture2D
+
+		if texture:
+			_flight_material.albedo_texture = texture
+			_flight_material.albedo_color = Color.WHITE
+			OpLog.i(LOG_TAG, ["dart_texture_loaded style=", active_dart_style, " path=", path, " size=", texture.get_size()])
+		else:
+			OpLog.e(LOG_TAG, ["dart_texture_load_failed path=", path])
 	else:
+		OpLog.e(LOG_TAG, ["dart_texture_missing style=", active_dart_style, " path=", path])
 		_flight_material.albedo_texture = null
-		_flight_material.albedo_color = DART_FLIGHT_BASE_COLOR
+		_flight_material.albedo_color = Color.MAGENTA
 
 func _ready() -> void:
-	for surface: int in FLIGHT_SURFACES:
-		set_surface_override_material(surface, Dart.flight_material())
+	var dart_material := Dart.flight_material()
+
+	if mesh:
+		for surface: int in range(mesh.get_surface_count()):
+			set_surface_override_material(surface, dart_material)
 
 	game = get_parent() as DartsGame
 	dartboard = get_parent().get_node_or_null("dart_board") as Dartboard
-
 	_base_basis = basis
-
 	_base_forward = _base_basis * MODEL_FORWARD_AXIS
 
 	if _base_forward.length_squared() > 0.000001:
@@ -100,21 +124,14 @@ func _ready() -> void:
 	else:
 		_base_forward = Vector3.FORWARD
 
-	rotation_speed = (
-		ROTATION_SPEED_MIN +
-		randf() * ROTATION_SPEED_RANGE
-	)
-
+	rotation_speed = ROTATION_SPEED_MIN + randf() * ROTATION_SPEED_RANGE
 	transparency = 1.0
 
-	OpLog.d(LOG_TAG, [
-		"dart_ready game_valid=", is_instance_valid(game),
-		" dartboard_valid=", is_instance_valid(dartboard),
-		" rotation_speed=", rotation_speed,
-		" base_forward=", _base_forward,
-		" basis=", _base_basis
+	OpLog.i(LOG_TAG, [
+		"dart_ready style=", Dart.active_dart_style,
+		" texture=", Dart.dart_style_path(Dart.active_dart_style),
+		" surfaces=", mesh.get_surface_count() if mesh else 0
 	])
-
 
 func throw(p_end_pos: Vector3) -> void:
 	start_pos = position

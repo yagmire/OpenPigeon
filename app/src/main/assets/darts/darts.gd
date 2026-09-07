@@ -73,7 +73,7 @@ var darts_menu_layer: Control
 var darts_menu_panel: PanelContainer
 var darts_menu_open: bool = false
 
-const DART_WHITE_SEGMENTS := {
+const DART_BLACK_SEGMENTS := {
 	20: true,
 	18: true,
 	13: true,
@@ -207,8 +207,8 @@ func _add_settings_rows(_container, popup_script) -> void:
 	for style: int in Dart.available_dart_styles():
 		items.append({
 			"id": str(style),
-			"label": "Dart %d" % style,
-			"texture_path": Dart.dart_style_path(style)
+			"label": "Dart %d" % (style + 1),
+			"texture_path": Dart.dart_preview_path(style)
 		})
 
 	if items.is_empty():
@@ -231,7 +231,7 @@ func _ensure_main_dart() -> bool:
 	if is_instance_valid(main_dart):
 		return true
 
-	Dart.set_dart_style(int(SettingsManager.get_setting("darts", "dart_style", 1)))
+	Dart.set_dart_style(int(SettingsManager.get_setting("darts", "dart_style", 0)))
 	main_dart = get_node_or_null("dart") as Dart
 
 	if not is_instance_valid(main_dart):
@@ -391,12 +391,12 @@ func _score_color_code(score: Array, world_pos: Vector3) -> String:
 
 	var segment := _hit_segment_from_world(world_pos)
 	var multiplier := _hit_multiplier_from_world(world_pos, score)
-	var base_is_white := DART_WHITE_SEGMENTS.has(segment)
+	var base_is_black := DART_BLACK_SEGMENTS.has(segment)
 
 	if multiplier >= 2:
-		return "g" if base_is_white else "r"
+		return "r" if base_is_black else "g"
 
-	return "w" if base_is_white else "b"
+	return "b" if base_is_black else "w"
 
 func _configure_darts_avatar(avatar_button: TextureButton) -> void:
 	if not is_instance_valid(avatar_button):
