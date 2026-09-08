@@ -37,6 +37,7 @@ import android.os.Parcel
 import com.bluebubbles.messaging.MadridMessage
 import com.openbubbles.openpigeon.util.OpenPigeonLog
 import java.util.Locale
+import androidx.glance.layout.width
 
 internal val gameName = ActionParameters.Key<String>("game_name")
 internal val configName = ActionParameters.Key<String>("configName")
@@ -116,6 +117,7 @@ data class GameImageChoice(
     val game: Game,
     val image: ImageProvider,
     val label: String = game.displayName(),
+    val wins: Int = 0,
 )
 
 class ConfigureCallback : ActionCallback {
@@ -427,15 +429,48 @@ fun RenderGameChoiceTiles(
                                 .padding(4.dp),
                             horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
                         ) {
-                            Image(
-                                provider = choice.image,
-                                contentDescription = choice.label,
-                                modifier = GlanceModifier
-                                    .fillMaxWidth()
-                                    .height(imageHeight)
-                                    .cornerRadius(5.dp),
-                                contentScale = contentScale,
-                            )
+                            Box(
+                                modifier = GlanceModifier.fillMaxWidth(),
+                                contentAlignment = Alignment.TopEnd,
+                            ) {
+                                Image(
+                                    provider = choice.image,
+                                    contentDescription = choice.label,
+                                    modifier = GlanceModifier
+                                        .fillMaxWidth()
+                                        .height(imageHeight)
+                                        .cornerRadius(5.dp),
+                                    contentScale = contentScale,
+                                )
+
+                                if (choice.wins > 0) {
+                                    Row(
+                                        modifier = GlanceModifier
+                                            .padding(4.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f))
+                                            .cornerRadius(4.dp)
+                                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.Vertical.CenterVertically,
+                                    ) {
+                                        Image(
+                                            provider = ImageProvider(R.drawable.crown_24px),
+                                            contentDescription = "Wins",
+                                            modifier = GlanceModifier.height(12.dp),
+                                        )
+
+                                        Spacer(modifier = GlanceModifier.width(2.dp))
+
+                                        Text(
+                                            text = choice.wins.toString(),
+                                            style = TextStyle(
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = ColorProvider(Color.White),
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
 
                             Spacer(modifier = GlanceModifier.height(3.dp))
 

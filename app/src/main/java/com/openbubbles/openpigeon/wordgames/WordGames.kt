@@ -12,6 +12,7 @@ import com.openbubbles.openpigeon.RenderGameChoiceTiles
 import com.openbubbles.openpigeon.anagrams.AnagramsGame
 import com.openbubbles.openpigeon.wordbites.WordbitesGame
 import com.openbubbles.openpigeon.wordhunt.WordHuntGame
+import com.openbubbles.openpigeon.settings.GameStats
 
 class WordGames : Game {
     private val TAG = "WordGames"
@@ -28,23 +29,32 @@ class WordGames : Game {
     override fun Configuration(
         context: Context?,
     ) {
+        val anagrams = AnagramsGame()
+        val wordHunt = WordHuntGame()
+        val wordBites = WordbitesGame()
+
+        if (context != null) GameStats.init(context)
+
         RenderGameChoiceTiles(
             title = "Choose Game",
             choices = listOf(
                 GameImageChoice(
-                    game = AnagramsGame(),
+                    game = anagrams,
                     label = "Anagrams",
                     image = ImageProvider(R.drawable.anagrams_6l),
+                    wins = if (context != null) GameStats.getWins(anagrams.getName()) else 0,
                 ),
                 GameImageChoice(
-                    game = WordHuntGame(),
+                    game = wordHunt,
                     label = "Word Hunt",
                     image = ImageProvider(R.drawable.wordhunt),
+                    wins = if (context != null) GameStats.getWins(wordHunt.getName()) else 0,
                 ),
                 GameImageChoice(
-                    game = WordbitesGame(),
+                    game = wordBites,
                     label = "Word Bites",
                     image = ImageProvider(R.drawable.wordbites),
+                    wins = if (context != null) GameStats.getWins(wordBites.getName()) else 0,
                 ),
             ),
             imageHeight = 74.dp,
