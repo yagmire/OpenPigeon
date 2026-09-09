@@ -404,6 +404,7 @@ class AvatarView @JvmOverloads constructor(
     // ── Full render ───────────────────────────────────────────────────────────
     private val drawPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val clipPath = Path()
+    private val foregroundClipPath = Path()
 
     private fun renderFully(canvas: Canvas, w: Float, h: Float, s: DrawState) {
         val unit = minOf(w / LOGICAL_WIDTH, h / LOGICAL_HEIGHT)
@@ -428,6 +429,10 @@ class AvatarView @JvmOverloads constructor(
 
         }
 
+        foregroundClipPath.reset()
+        foregroundClipPath.addRect(0f, 0f, w, pillRect.centerY(), Path.Direction.CW)
+        foregroundClipPath.addRoundRect(pillRect, pillRect.width() * 0.38f, pillRect.height() * 0.48f, Path.Direction.CW)
+
         val skinFinal = applyBrightness(s.fshapeColor, s.fshapeBrightness)
         val hairFinal = applyBrightness(s.hairColor, s.hairBrightness)
         val clothFinal = applyBrightness(s.clothingColor, s.clothingBrightness)
@@ -446,37 +451,37 @@ class AvatarView @JvmOverloads constructor(
             drawPaint.colorFilter = null
         }
 
-        val hairShift = -8f * (BODY_HEIGHT * unit / 256f)
-        drawCell(AvatarBitmapCache.bmHairBack, hairRegions[s.hairStyle], hairFinal, hairShift)
-        drawCell(AvatarBitmapCache.bmTorso, torsoRegion, skinFinal)
-        drawCell(AvatarBitmapCache.bmClothing, clothingRegions[s.clothingStyle], clothFinal)
-        drawCell(AvatarBitmapCache.bmClothingDt, clothingRegions[s.clothingStyle])
-        drawCell(AvatarBitmapCache.bmFaces, fshapeRegions[s.fshapeStyle] ?: fshapeRegions["Default"], skinFinal)
-        drawCell(AvatarBitmapCache.bmEyes, eyesRegions[s.eyesStyle])
-        drawCell(AvatarBitmapCache.bmMouth, mouthRegions[s.mouthStyle], if (s.mouthStyle in mouthWithFacialHair) hairFinal else Color.WHITE)
-        drawCell(AvatarBitmapCache.bmHairFront, hairRegions[s.hairStyle], hairFinal, hairShift)
+        canvas.withClip(foregroundClipPath) {
+            val hairShift = -8f * (BODY_HEIGHT * unit / 256f)
 
-        val headAccessoryStyle = AvatarData.normalizeHeadAccessoryStyle(s.headAccessoryStyle)
+            drawCell(AvatarBitmapCache.bmHairBack, hairRegions[s.hairStyle], hairFinal, hairShift)
+            drawCell(AvatarBitmapCache.bmTorso, torsoRegion, skinFinal)
+            drawCell(AvatarBitmapCache.bmClothing, clothingRegions[s.clothingStyle], clothFinal)
+            drawCell(AvatarBitmapCache.bmClothingDt, clothingRegions[s.clothingStyle])
+            drawCell(AvatarBitmapCache.bmFaces, fshapeRegions[s.fshapeStyle] ?: fshapeRegions["Default"], skinFinal)
+            drawCell(AvatarBitmapCache.bmEyes, eyesRegions[s.eyesStyle])
+            drawCell(AvatarBitmapCache.bmMouth, mouthRegions[s.mouthStyle], if (s.mouthStyle in mouthWithFacialHair) hairFinal else Color.WHITE)
+            drawCell(AvatarBitmapCache.bmHairFront, hairRegions[s.hairStyle], hairFinal, hairShift)
 
-        if (headAccessoryStyle != "hat_0") {
-            val source = headAccessoryRegions[headAccessoryStyle]
-            val bitmap = AvatarBitmapCache.bmHeadAccessories
+            val headAccessoryStyle = AvatarData.normalizeHeadAccessoryStyle(s.headAccessoryStyle)
 
-            if (source != null && bitmap != null) {
-                val accessorySize = drawSize * 1.5f
-                val accessoryCenterY = baseY - drawSize * 0.25f
-                val left = centerX - accessorySize / 2f
-                val top = accessoryCenterY - accessorySize / 2f
-                drawPaint.colorFilter = null
-                canvas.drawBitmap(bitmap, source, RectF(left, top, left + accessorySize, top + accessorySize), drawPaint)
+            if (headAccessoryStyle != "hat_0") {
+                val source = headAccessoryRegions[headAccessoryStyle]
+                val bitmap = AvatarBitmapCache.bmHeadAccessories
+
+                if (source != null && bitmap != null) {
+                    val accessorySize = drawSize * 1.5f
+                    val accessoryCenterY = baseY - drawSize * 0.25f
+                    val left = centerX - accessorySize / 2f
+                    val top = accessoryCenterY - accessorySize / 2f
+                    drawPaint.colorFilter = null
+                    canvas.drawBitmap(bitmap, source, RectF(left, top, left + accessorySize, top + accessorySize), drawPaint)
+                }
             }
-        }
 
-        val faceAccessoryStyle = AvatarData.normalizeFaceAccessoryStyle(s.faceAccessoryStyle)
-        drawCell(
-            AvatarBitmapCache.bmFaceAccessories,
-            faceAccessoryRegions[faceAccessoryStyle]
-        )
+            val faceAccessoryStyle = AvatarData.normalizeFaceAccessoryStyle(s.faceAccessoryStyle)
+            drawCell(AvatarBitmapCache.bmFaceAccessories, faceAccessoryRegions[faceAccessoryStyle])
+        }
     }
 
     // ── Brightness math ───────────────────────────────────────────────────────

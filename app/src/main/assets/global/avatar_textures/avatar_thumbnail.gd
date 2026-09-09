@@ -5,6 +5,7 @@ class_name AvatarThumbnail
 @export var is_display_only: bool = false
 @export var controlled_by_data: bool = false
 @onready var sub_viewport: SubViewport = %SubViewport
+@onready var pill_mask: Sprite2D = %SubViewport/PillMask
 @onready var color_rect: ColorRect = %SubViewport/PillMask/ColorRect
 @onready var avatar_background: Sprite2D = %SubViewport/PillMask/AvatarBackground
 @onready var avatar_hair_back: Sprite2D = %SubViewport/Foreground/AvatarHairBack
@@ -99,7 +100,22 @@ const MOUTH_WITH_FACIAL_HAIR := {
 	"mouth13": true, "mouth14": true, "mouth15": true, "mouth16": true, "mouth17": true
 }
 	
-const avatar_clothing_regions := { "clothing1": Rect2(0, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE), "clothing2": Rect2(AVATAR_PART_SIZE, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE), "clothing3": Rect2(AVATAR_PART_SIZE * 2, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE)}
+const avatar_clothing_regions := {
+	"clothing1": Rect2(0, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing2": Rect2(AVATAR_PART_SIZE, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing3": Rect2(AVATAR_PART_SIZE * 2, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing4": Rect2(AVATAR_PART_SIZE * 3, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing5": Rect2(AVATAR_PART_SIZE * 4, 0, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing6": Rect2(0, AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing7": Rect2(AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing8": Rect2(AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing9": Rect2(AVATAR_PART_SIZE * 3, AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing10": Rect2(AVATAR_PART_SIZE * 4, AVATAR_PART_SIZE, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing11": Rect2(0, AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing12": Rect2(AVATAR_PART_SIZE, AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing13": Rect2(AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE, AVATAR_PART_SIZE),
+	"clothing14": Rect2(AVATAR_PART_SIZE * 3, AVATAR_PART_SIZE * 2, AVATAR_PART_SIZE, AVATAR_PART_SIZE)
+}
 
 const FACE_ACCESSORY_COUNT := 14
 
@@ -147,6 +163,8 @@ func _ready():
 		visible = false
 		disabled = true
 		return
+
+	_setup_foreground_clip()
 
 	if controlled_by_data:
 		pass
@@ -406,6 +424,47 @@ func set_selected(is_selected: bool):
 	else:
 		remove_theme_stylebox_override("normal")
 
+func _setup_foreground_clip() -> void:
+	if not is_instance_valid(pill_mask) or pill_mask.texture == null:
+		return
+
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+
+uniform sampler2D pill_mask_texture : filter_linear;
+uniform vec2 viewport_size;
+uniform vec2 pill_position;
+uniform vec2 pill_size;
+
+void fragment() {
+	float clip_y = pill_position.y + pill_size.y * 0.5;
+	vec2 pixel_position = SCREEN_UV * viewport_size;
+
+	if (pixel_position.y >= clip_y) {
+		vec2 mask_uv = (pixel_position - pill_position) / pill_size;
+		float mask_alpha = 0.0;
+
+		if (mask_uv.x >= 0.0 && mask_uv.x <= 1.0 && mask_uv.y >= 0.0 && mask_uv.y <= 1.0) {
+			mask_alpha = texture(pill_mask_texture, mask_uv).a;
+		}
+
+		COLOR.a *= mask_alpha;
+	}
+}
+"""
+
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("pill_mask_texture", pill_mask.texture)
+	material.set_shader_parameter("viewport_size", Vector2(sub_viewport.size))
+	material.set_shader_parameter("pill_position", pill_mask.position)
+	material.set_shader_parameter("pill_size", pill_mask.texture.get_size())
+
+	for sprite in [avatar_hair_back, avatar_torso, avatar_clothing, avatar_clothing_details, avatar_base_fshape, avatar_eyes, avatar_mouth, avatar_hair_front, avatar_head_accessories, avatar_face_accessories]:
+		if sprite:
+			sprite.material = material
+
 func _center_and_scale_sprites():
 	var center_x: float = sub_viewport.size.x * 0.5
 	var h: float = 90.0
@@ -430,27 +489,25 @@ func _center_and_scale_sprites():
 			sprite.scale = Vector2(s256, s256)
 
 func _apply_layer_order():
-	# Use absolute Z for predictable ordering
-	for n in [avatar_face_accessories, avatar_head_accessories, avatar_clothing, avatar_clothing_details, avatar_hair_front,
-			  avatar_mouth, avatar_eyes, avatar_base_fshape, avatar_torso, avatar_hair_back, avatar_background]:
+	for n in [avatar_face_accessories, avatar_head_accessories, avatar_clothing, avatar_clothing_details, avatar_hair_front, avatar_mouth, avatar_eyes, avatar_base_fshape, avatar_torso, avatar_hair_back, avatar_background]:
 		if n:
 			n.z_as_relative = false
+
 	if color_rect:
 		color_rect.z_as_relative = false
 
-	# Top -> Bottom
 	if avatar_face_accessories: avatar_face_accessories.z_index = Z_FACE_ACCESSORIES
 	if avatar_head_accessories: avatar_head_accessories.z_index = Z_HEAD_ACCESSORIES
-	if avatar_hair_front:       avatar_hair_front.z_index       = Z_HAIR_FRONT
-	if avatar_mouth:            avatar_mouth.z_index            = Z_MOUTH
-	if avatar_eyes:             avatar_eyes.z_index             = Z_EYES
-	if avatar_base_fshape:      avatar_base_fshape.z_index      = Z_BASE_FSHAPE
+	if avatar_hair_front: avatar_hair_front.z_index = Z_HAIR_FRONT
+	if avatar_mouth: avatar_mouth.z_index = Z_MOUTH
+	if avatar_eyes: avatar_eyes.z_index = Z_EYES
+	if avatar_base_fshape: avatar_base_fshape.z_index = Z_BASE_FSHAPE
 	if avatar_clothing_details: avatar_clothing_details.z_index = Z_CLOTHING_DETAILS
-	if avatar_clothing:         avatar_clothing.z_index         = Z_CLOTHING
-	if avatar_torso:            avatar_torso.z_index            = Z_TORSO
-	if avatar_hair_back:        avatar_hair_back.z_index        = Z_HAIR_BACK
-	if avatar_background:       avatar_background.z_index       = Z_BACKGROUND
-	if color_rect:              color_rect.z_index              = Z_BACKGROUND  # same layer as background
+	if avatar_clothing: avatar_clothing.z_index = Z_CLOTHING
+	if avatar_torso: avatar_torso.z_index = Z_TORSO
+	if avatar_hair_back: avatar_hair_back.z_index = Z_HAIR_BACK
+	if avatar_background: avatar_background.z_index = Z_BACKGROUND
+	if color_rect: color_rect.z_index = Z_BACKGROUND
 
 func calculate_final_color(base_color: Color, brightness_slider_val: float) -> Color:
 	if brightness_slider_val < 0.0:
