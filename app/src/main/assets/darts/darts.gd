@@ -143,6 +143,17 @@ const RESULT_WIN := 1
 const RESULT_LOSS := -1
 const RESULT_DRAW := 2
 
+const DART_SETTINGS_PREVIEW_VIEWPORT_SIZE: int = 128
+const DART_SETTINGS_PREVIEW_BAKED_DIR := "res://darts/previews"
+const DART_SETTINGS_PREVIEW_BAKE_OUT_DIR := "user://darts_previews"
+const BAKE_DARTS_PREVIEWS: bool = false
+const DART_SETTINGS_PREVIEW_ROTATION := Vector3(-18.0, 215.0, -18.0)
+
+static var _settings_preview_texture_cache: Dictionary = {}
+var _settings_preview_waiters: Dictionary = {}
+var _settings_preview_render_queue: Array[Dictionary] = []
+var _settings_preview_queue_running: bool = false
+
 var match_result: int = RESULT_NONE
 
 func _get_music_stream() -> AudioStream:
@@ -208,7 +219,7 @@ func _add_settings_rows(_container, popup_script) -> void:
 		items.append({
 			"id": str(style),
 			"label": "Dart %d" % (style + 1),
-			"texture_path": Dart.dart_preview_path(style)
+			"style": style
 		})
 
 	if items.is_empty():
@@ -222,10 +233,302 @@ func _add_settings_rows(_container, popup_script) -> void:
 		func(id: String) -> void:
 			Dart.set_dart_style(int(id))
 			SettingsManager.set_setting("darts", "dart_style", Dart.active_dart_style)
-			OpLog.i(LOG_TAG, ["dart_style_selected style=", Dart.active_dart_style])
+			OpLog.i(LOG_TAG, ["dart_style_selected style=", Dart.active_dart_style]),
+		Callable(self, "_make_darts_settings_preview")
 	)
 
 	popup_script.add_custom_setting(dart_row)
+
+func _make_darts_settings_preview(item: Dictionary) -> Control:
+	var style: int = clampi(int(item.get("style", 0)), Dart.DART_STYLE_MIN, Dart.DART_STYLE_MAX)
+	return _make_darts_cached_settings_preview(style)
+
+func _darts_settings_preview_key(style: int) -> String:
+	return "dart:%d" % style
+
+func _make_darts_cached_settings_preview(style: int) -> Control:
+	var texture_rect := TextureRect.new()
+	texture_rect.custom_minimum_size = Vector2(70.0, 70.0)
+	texture_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var key: String = _darts_settings_preview_key(style)
+	var baked: Texture2D = _baked_darts_preview_texture(style)
+
+	if baked != null:
+		texture_rect.texture = baked
+		return texture_rect
+
+	if not _settings_preview_waiters.has(key):
+		_settings_preview_waiters[key] = []
+
+	var waiters: Array = _settings_preview_waiters[key]
+	waiters.append(weakref(texture_rect))
+	_settings_preview_waiters[key] = waiters
+
+	_queue_darts_settings_preview(style)
+	return texture_rect
+
+func _baked_darts_preview_texture(style: int) -> Texture2D:
+	var key: String = _darts_settings_preview_key(style)
+
+	if _settings_preview_texture_cache.has(key):
+		return _settings_preview_texture_cache[key] as Texture2D
+
+	var path: String = "%s/dart%02d.png" % [DART_SETTINGS_PREVIEW_BAKED_DIR, style]
+
+	if not ResourceLoader.exists(path):
+		return null
+
+	var texture := ResourceLoader.load(path) as Texture2D
+
+	if texture == null:
+		return null
+
+	_settings_preview_texture_cache[key] = texture
+	return texture
+
+func _queue_darts_settings_preview(style: int) -> void:
+	var key: String = _darts_settings_preview_key(style)
+
+	if _baked_darts_preview_texture(style) != null:
+		return
+
+	for queued: Dictionary in _settings_preview_render_queue:
+		if String(queued.get("key", "")) == key:
+			return
+
+	_settings_preview_render_queue.append({
+		"key": key,
+		"style": style
+	})
+
+	if not _settings_preview_queue_running:
+		_settings_preview_queue_running = true
+		call_deferred("_process_darts_settings_preview_queue")
+
+func _process_darts_settings_preview_queue() -> void:
+	while not _settings_preview_render_queue.is_empty():
+		if not is_inside_tree():
+			_settings_preview_queue_running = false
+			return
+
+		var entry: Dictionary = _settings_preview_render_queue.pop_front()
+		var key: String = String(entry.get("key", ""))
+		var style: int = int(entry.get("style", 0))
+
+		if _settings_preview_texture_cache.has(key):
+			continue
+
+		var texture: Texture2D = await _render_darts_settings_preview_texture(style)
+
+		if texture != null:
+			_settings_preview_texture_cache[key] = texture
+			_update_darts_settings_preview_waiters(key, texture)
+
+		await get_tree().process_frame
+
+	_settings_preview_queue_running = false
+
+func _update_darts_settings_preview_waiters(key: String, texture: Texture2D) -> void:
+	if not _settings_preview_waiters.has(key):
+		return
+
+	var waiters: Array = _settings_preview_waiters[key]
+
+	for waiter in waiters:
+		var texture_rect: TextureRect = null
+
+		if waiter is WeakRef:
+			var ref_obj: Object = (waiter as WeakRef).get_ref()
+			if ref_obj is TextureRect:
+				texture_rect = ref_obj as TextureRect
+		elif waiter is TextureRect:
+			texture_rect = waiter as TextureRect
+
+		if is_instance_valid(texture_rect):
+			texture_rect.texture = texture
+
+	_settings_preview_waiters.erase(key)
+
+func bake_darts_settings_previews() -> void:
+	DirAccess.make_dir_recursive_absolute(DART_SETTINGS_PREVIEW_BAKE_OUT_DIR)
+
+	for style: int in Dart.available_dart_styles():
+		await _bake_darts_preview(style)
+
+	OpLog.i(LOG_TAG, ["dart_preview_bake_done dir=", DART_SETTINGS_PREVIEW_BAKE_OUT_DIR])
+
+func _bake_darts_preview(style: int) -> void:
+	var texture: Texture2D = await _render_darts_settings_preview_texture(style)
+
+	if texture == null:
+		return
+
+	var image: Image = texture.get_image()
+
+	if image == null or image.is_empty():
+		return
+
+	image.save_png("%s/dart%02d.png" % [DART_SETTINGS_PREVIEW_BAKE_OUT_DIR, style])
+
+func _render_darts_settings_preview_texture(style: int) -> Texture2D:
+	var model: Node3D = _build_darts_settings_preview_model(style)
+	if not is_instance_valid(model):
+		return null
+
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(DART_SETTINGS_PREVIEW_VIEWPORT_SIZE, DART_SETTINGS_PREVIEW_VIEWPORT_SIZE)
+	viewport.transparent_bg = true
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.world_3d = World3D.new()
+	add_child(viewport)
+
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = Color(0.0, 0.0, 0.0, 0.0)
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color.WHITE
+	environment.ambient_light_energy = 1.2
+	viewport.world_3d.environment = environment
+
+	var scene_root := Node3D.new()
+	viewport.add_child(scene_root)
+
+	var model_root := Node3D.new()
+	scene_root.add_child(model_root)
+	model_root.add_child(model)
+
+	var camera_node := Camera3D.new()
+	camera_node.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera_node.current = true
+	scene_root.add_child(camera_node)
+
+	var key_light := DirectionalLight3D.new()
+	key_light.light_energy = 1.35
+	key_light.rotation_degrees = Vector3(-38.0, -30.0, 0.0)
+	scene_root.add_child(key_light)
+
+	var fill_light := DirectionalLight3D.new()
+	fill_light.light_energy = 0.55
+	fill_light.rotation_degrees = Vector3(20.0, 145.0, 0.0)
+	scene_root.add_child(fill_light)
+
+	await get_tree().process_frame
+	_apply_darts_preview_style(model, style)
+
+	var bounds: AABB = _darts_settings_preview_bounds(model_root)
+	var visible_width: float = bounds.size.x
+	var visible_height: float = bounds.size.y
+
+	if visible_width < 0.001 or visible_height < 0.001:
+		visible_width = 1.0
+		visible_height = 1.0
+	else:
+		model_root.position = -bounds.get_center()
+
+	var fit_extent: float = maxf(visible_width, visible_height)
+	var camera_size: float = fit_extent / 1.02
+
+	camera_node.size = camera_size
+	camera_node.near = 0.01
+	camera_node.far = maxf(10.0, fit_extent * 10.0)
+	camera_node.position = Vector3(0.0, 0.0, maxf(2.0, fit_extent * 4.0))
+	camera_node.look_at(Vector3.ZERO, Vector3.UP)
+
+	await RenderingServer.frame_post_draw
+
+	var image: Image = viewport.get_texture().get_image()
+	viewport.queue_free()
+
+	if image == null or image.is_empty():
+		return null
+
+	return ImageTexture.create_from_image(image)
+
+func _build_darts_settings_preview_model(style: int) -> Node3D:
+	if not _ensure_main_dart():
+		return null
+
+	var duplicated: Node = main_dart.duplicate()
+	if not duplicated is Dart:
+		if is_instance_valid(duplicated):
+			duplicated.queue_free()
+		return null
+
+	var preview_dart := duplicated as Dart
+	preview_dart.transform = Transform3D.IDENTITY
+	preview_dart.position = Vector3.ZERO
+	preview_dart.rotation_degrees = DART_SETTINGS_PREVIEW_ROTATION
+	preview_dart.visible = true
+	preview_dart.transparency = 1.0
+	_darts_settings_preview_disable_runtime(preview_dart)
+	preview_dart.set_meta("preview_style", style)
+	return preview_dart
+
+func _apply_darts_preview_style(node: Node3D, style: int) -> void:
+	var preview_material := StandardMaterial3D.new()
+	preview_material.roughness = 0.8
+	preview_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	preview_material.albedo_color = Color.WHITE
+
+	var path := Dart.dart_style_path(style)
+
+	if ResourceLoader.exists(path):
+		var texture := ResourceLoader.load(path) as Texture2D
+		if texture != null:
+			preview_material.albedo_texture = texture
+
+	if node is Dart:
+		var dart_node := node as Dart
+		if dart_node.mesh != null:
+			for surface: int in range(dart_node.mesh.get_surface_count()):
+				dart_node.set_surface_override_material(surface, preview_material)
+
+func _darts_settings_preview_bounds(root: Node3D) -> AABB:
+	var bounds := AABB()
+	var has_bounds: bool = false
+	var root_inverse: Transform3D = root.global_transform.affine_inverse()
+	var visual_nodes: Array[Node] = root.find_children("*", "VisualInstance3D", true, false)
+
+	for found: Node in visual_nodes:
+		var visual := found as VisualInstance3D
+		if visual == null or not visual.is_visible_in_tree():
+			continue
+
+		var local_bounds: AABB = visual.get_aabb()
+		if local_bounds.size.length_squared() <= 0.000001:
+			continue
+
+		var to_root: Transform3D = root_inverse * visual.global_transform
+		var visual_bounds: AABB = to_root * local_bounds
+
+		if has_bounds:
+			bounds = bounds.merge(visual_bounds)
+		else:
+			bounds = visual_bounds
+			has_bounds = true
+
+	return bounds
+
+func _darts_settings_preview_disable_runtime(node: Node) -> void:
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+
+	if node is RigidBody3D:
+		var body: RigidBody3D = node as RigidBody3D
+		body.freeze = true
+		body.collision_layer = 0
+		body.collision_mask = 0
+	elif node is CollisionObject3D:
+		var collision_object: CollisionObject3D = node as CollisionObject3D
+		collision_object.collision_layer = 0
+		collision_object.collision_mask = 0
+
+	for child: Node in node.get_children():
+		_darts_settings_preview_disable_runtime(child)
 
 func _ensure_main_dart() -> bool:
 	if is_instance_valid(main_dart):
@@ -1875,6 +2178,8 @@ func _on_game_ready():
 	call_deferred("_initialize_darts_avatars")
 
 	_ensure_main_dart()
+	if BAKE_DARTS_PREVIEWS:
+		call_deferred("bake_darts_settings_previews")
 	_setup_dart_indicator()
 	_setup_points_to_win_popup()
 

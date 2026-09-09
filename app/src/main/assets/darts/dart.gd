@@ -20,7 +20,7 @@ const DART_FALLBACK_COLOR := Color.WHITE
 const DART_PREVIEW_DIR := "res://darts"
 
 static func dart_preview_path(style: int) -> String:
-	var preview_path := "%s/darts_ui_dart%04d_Normal@3x.png" % [DART_PREVIEW_DIR, style]
+	var preview_path := "%s/previews/dart%02d.png" % [DART_PREVIEW_DIR, style]
 
 	if ResourceLoader.exists(preview_path):
 		return preview_path
