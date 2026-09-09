@@ -54,9 +54,9 @@ class AvatarView @JvmOverloads constructor(
     val hairRegions = (1..15).associate { i -> "hair$i" to p256((i - 1) % 5, (i - 1) / 5) }
     val eyesRegions = (1..13).associate { i -> "eyes$i" to p256((i - 1) % 5, (i - 1) / 5) }
     val mouthRegions = (1..17).associate { i -> "mouth$i" to p256((i - 1) % 5, (i - 1) / 5) }
-    val clothingRegions = mapOf(
-        "clothing1" to p256(0, 0), "clothing2" to p256(1, 0), "clothing3" to p256(2, 0)
-    )
+    val clothingRegions = (1..14).associate { i ->
+        "clothing$i" to p256((i - 1) % 5, (i - 1) / 5)
+    }
 
     val headAccessoryRegions =
         (0..12).associate { index -> "hat_$index" to p384(index % 5, index / 5) }
@@ -133,7 +133,7 @@ class AvatarView @JvmOverloads constructor(
             val hairKeys = (1..15).map { "hair$it" }
             val eyesKeys = (1..13).map { "eyes$it" }
             val mouthKeys = (1..17).map { "mouth$it" }
-            val clothingKeys = listOf("clothing1", "clothing2", "clothing3")
+            val clothingKeys = (1..14).map { "clothing$it" }
             val backdropKeys = listOf("Plain") + (1..9).map { "Pattern $it" }
 
             fun parseColor(tokens: List<String>, offset: Int = 1): Int {
@@ -225,7 +225,7 @@ class AvatarView @JvmOverloads constructor(
             val hairKeys = (1..15).map { "hair$it" }
             val eyesKeys = (1..13).map { "eyes$it" }
             val mouthKeys = (1..17).map { "mouth$it" }
-            val clothingKeys = listOf("clothing1", "clothing2", "clothing3")
+            val clothingKeys = (1..14).map { "clothing$it" }
             val backdropKeys = listOf("Plain") + (1..9).map { "Pattern $it" }
 
             fun colorStr(argb: Int): String {

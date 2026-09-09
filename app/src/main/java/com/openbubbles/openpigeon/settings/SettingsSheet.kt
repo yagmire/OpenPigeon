@@ -1235,7 +1235,7 @@ class SettingsSheet(
             Tab.CLOTHING -> {
                 buildStylePicker(
                     pickerRow,
-                    (1..3).map { "clothing$it" },
+                    (1..14).map { "clothing$it" },
                     AvatarData.clothingStyle
                 ) { AvatarData.clothingStyle = it; refreshMainPreview() }
                 buildColorSwatches(clothingColors(), AvatarData.clothingColor) { c ->
